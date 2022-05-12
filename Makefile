@@ -17,6 +17,9 @@ race_test:
 build: info
 	- cd $(SRC) && CGO_ENABLED=0 go build -ldflags "-X main.project=$(PROJECT) -X main.revision=$(REV) -s -w" -o ../$(DIST)/$(PROJECT)
 
+install: build
+	- cp $(DIST)/$(PROJECT) $(HOME)/bin
+
 info:
 	- @echo "$(PROJECT) revision $(REV)"
 

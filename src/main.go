@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"errors"
 
 	"github.com/relex/aini"
 	"github.com/umputun/go-flags"
@@ -39,16 +40,23 @@ func main() {
 
 	content, err := ioutil.ReadFile(opts.IniFile) // the file is inside the local directory
 	if err != nil {
-		fmt.Printf("[ERROR] can't open file: %v\n", err)
+		fmt.Printf("[ERROR] can't read file: %v\n", err)
 		os.Exit(2)
 	}
 
+	fmt.Printf("Start parse file %s...\n", opts.IniFile)
 	// Parse ansible invntory file and extract hosts with ip addresses
-	hostsSection, err := ansibleToHosts(string(content), opts.IniSection)
+	hostsSection, linesCount, err := ansibleToHosts(string(content), opts.IniSection)
 	if err != nil {
 		log.Printf("[ERROR] inventory parse error: %v\n", err)
 		os.Exit(2)
 	}
+
+	if linesCount == 0 {
+		log.Printf("No addresses found in inventory file\n")
+		os.Exit(0)
+	}
+	fmt.Printf("Parse complete, %d addresses found\n", linesCount)
 
 	// Scan hosts file, look for tagged block and replace it
 	srcHostsFile, err := os.Open(opts.HostsFile)
@@ -69,8 +77,8 @@ func main() {
 	inTaggedSection := false
 	sectionWritten := false
 
-	hostsSectionOpenTag := "# TAG: " + opts.Tag + " {{{"
-	hostsSectionCloseTag := "# TAG: " + opts.Tag + " }}}"
+	hostsSectionOpenTag := "### TAG: " + opts.Tag + " {{{"
+	hostsSectionCloseTag := "### TAG: " + opts.Tag + " }}}"
 	for fileScanner.Scan() {
 		if !inTaggedSection && fileScanner.Text() == hostsSectionOpenTag {
 			inTaggedSection = true
@@ -82,7 +90,7 @@ func main() {
 
 				// write new version of section
 				dstHostsFile.WriteString(hostsSectionOpenTag + "\n")
-				dstHostsFile.WriteString(hostsSection + "\n")
+				dstHostsFile.WriteString(hostsSection)
 				dstHostsFile.WriteString(hostsSectionCloseTag + "\n")
 
 				sectionWritten = true
@@ -94,30 +102,37 @@ func main() {
 
 	if !sectionWritten {
 		dstHostsFile.WriteString(hostsSectionOpenTag + "\n")
-		dstHostsFile.WriteString(hostsSection + "\n")
+		dstHostsFile.WriteString(hostsSection)
 		dstHostsFile.WriteString(hostsSectionCloseTag + "\n")
 	}
 
 	os.Remove(opts.HostsFile)
 	os.Rename(dstHostsFileName, opts.HostsFile)
+
+	fmt.Printf("Hosts file generation complete\n")
 }
 
-func ansibleToHosts(content string, section string) (string, error) {
+func ansibleToHosts(content string, section string) (string, int, error) {
 	inventoryReader := strings.NewReader(content)
 	inventory, err := aini.Parse(inventoryReader)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	result := ""
-	group := inventory.Groups[section]
+	group, ok := inventory.Groups[section]
+	if !ok {
+		return "", 0, errors.New("Section not found")
+	}
+	lines := 0
 	for _, h := range group.Hosts {
 		ip := h.Vars["ansible_host"]
 		if strings.TrimSpace(ip) == "" {
 			ip = "# no ip"
 		}
 		result += ip + "\t" + h.Name + "\n"
+		lines++
 	}
 
-	return result, nil
+	return result, lines, nil
 }
